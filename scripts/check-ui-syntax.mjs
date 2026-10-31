@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-const pages=['diagnostics/ocr-lab.html','diagnostics/intake-lab.html'];
+const pages=['diagnostics/ocr-lab.html','diagnostics/intake-lab.html','diagnostics/delivery-note-lab.html'];
 let failed=false;
 for(const path of pages){
  const html=readFileSync(path,'utf8');
