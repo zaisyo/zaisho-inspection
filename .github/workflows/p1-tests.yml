@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: OCR ROI and candidate unit tests
-        run: node --test tests/ocr-diagnostics.test.mjs
+      - name: Run every regression test
+        run: node --test tests/*.test.mjs
       - name: Baseline source structure
         run: node scripts/baseline_audit.mjs
