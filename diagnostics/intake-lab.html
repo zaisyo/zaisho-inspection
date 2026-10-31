@@ -59,13 +59,13 @@ $('clear').onclick=async()=>{await stopCamera();if(!confirm('試験データを�
 $('export').onclick=()=>exportCsv([['品番','品名','予定数量','検品済数量','管理No.','件管No.'],...items.map(x=>[x.part,x.name,x.qty,x.done,x.management,x.caseNo])],'inspection-preview.csv');
 $('exportHistory').onclick=()=>exportCsv([['イベントID','日時','対象明細ID','品番','原コード','入力方式','処理'],...history.map(h=>[h.eventId,h.at,h.itemId,items.find(x=>x.id===h.itemId)?.part||'',h.rawCode,h.inputMethod,h.type])],'inspection-history.csv');
 function status(message){$('storageStatus').textContent=message}
-async function persist(){try{await saveLocal(snapshot());status('端末へ自動保存済み '+new Date().toLocaleTimeString('ja-JP'))}catch(e){status('自動保存失敗。JSONバックアップを保存してください: '+String(e))}}
+let saveQueue=Promise.resolve();function persist(){let record;try{record=snapshot()}catch(e){status('保存対象が不正です: '+String(e));return Promise.reject(e)}const task=saveQueue.catch(()=>{}).then(()=>saveLocal(record));saveQueue=task;return task.then(()=>status('端末へ保存済み '+new Date().toLocaleTimeString('ja-JP'))).catch(e=>{status('保存失敗。JSONバックアップを保存してください: '+String(e))})}
 function csvCell(v){let s=String(v??'');if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"'}
 function exportCsv(rows,name){const csv='\uFEFF'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function snapshot(){return createSnapshot(items,history)}
 function applySnapshot(record){items=record.items;history=record.history;pending=null;scanSource='manual';$('confirm').disabled=true;$('rawCode').value='';$('part').value='';paint()}
 function downloadText(text,name){const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-$('saveLocal').onclick=async()=>{try{await saveLocal(snapshot());status('端末内データベースに保存しました。別途JSONバックアップも作成してください。')}catch(e){status('保存失敗: '+String(e))}};
+$('saveLocal').onclick=async()=>{try{await persist();status('保存処理を実行しました。別途JSONバックアップも作成してください。')}catch(e){status('保存失敗: '+String(e))}};
 $('loadLocal').onclick=async()=>{try{const r=await loadLocal();if(!r){status('保存データがありません');return}if(!confirm('現在の試験データを保存済みデータで置き換えますか？'))return;await stopCamera();applySnapshot(r);status('端末内の保存データを読み込みました')}catch(e){status('読込失敗: '+String(e))}};
 $('downloadBackup').onclick=()=>{try{downloadText(exportBackup(snapshot()),'inspection-backup.json');status('JSONバックアップを出力しました')}catch(e){status('出力失敗: '+String(e))}};
 $('restoreBackup').onclick=async()=>{const file=$('restoreFile').files?.[0];if(!file){status('先にJSONファイルを選択してください');return}try{if(file.size>20_000_000)throw Error('バックアップが大きすぎます');const record=parseBackup(await file.text());if(!confirm('現在の試験データをバックアップで置き換えます。復元しますか？'))return;await stopCamera();applySnapshot(record);await persist();status('バックアップを復元して端末に保存しました')}catch(e){status('復元失敗: '+String(e))}};
