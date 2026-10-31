@@ -18,10 +18,11 @@ jobs:
           node scripts/check-ui-syntax.mjs
       - name: Bundle self-contained development preview
         run: |
-          mkdir -p preview/diagnostics preview/src/ocr preview/src/intake
-          cp diagnostics/ocr-lab.html diagnostics/intake-lab.html preview/diagnostics/
+          mkdir -p preview/diagnostics preview/src/ocr preview/src/intake preview/src/storage
+          cp diagnostics/ocr-lab.html diagnostics/intake-lab.html diagnostics/delivery-note-lab.html preview/diagnostics/
           cp src/ocr/*.mjs preview/src/ocr/
           cp src/intake/*.mjs preview/src/intake/
+          cp src/storage/*.mjs preview/src/storage/
           cat > preview/README.txt <<'EOF'
           Zaisyo inspection development diagnostic preview.
           Open via an HTTPS static host or localhost HTTP server.
@@ -29,6 +30,8 @@ jobs:
           This is not a production deployment and contains no business data.
           Suggested local server: python -m http.server 8000 --directory preview
           Then visit http://localhost:8000/diagnostics/intake-lab.html
+          Delivery note OCR: http://localhost:8000/diagnostics/delivery-note-lab.html
+          OCR image diagnostics: http://localhost:8000/diagnostics/ocr-lab.html
           EOF
       - uses: actions/upload-artifact@v4
         with:
