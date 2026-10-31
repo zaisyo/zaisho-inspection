@@ -1,0 +1,12 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createSnapshot,parseBackup,exportBackup,validateSnapshot,openLocalDatabase} from '../src/storage/local.mjs';
+const item={id:'one',part:'AB-12',qty:2,done:1,name:'サンプル'};
+const event={eventId:'e1',itemId:'one',type:'CONFIRM',at:'2026-10-31T00:00:00Z',rawCode:'AB-12',inputMethod:'barcode'};
+test('backup round trip preserves known fields',()=>{const a=createSnapshot([item],[event]);assert.deepEqual(parseBackup(exportBackup(a)),a)});
+test('reject damaged quantity',()=>assert.throws(()=>createSnapshot([{...item,done:3}])));
+test('reject duplicate IDs',()=>assert.throws(()=>createSnapshot([item,item])));
+test('reject event referencing missing item',()=>assert.throws(()=>createSnapshot([item],[{...event,itemId:'missing'}])));
+test('reject unknown schema',()=>assert.throws(()=>validateSnapshot({schemaVersion:99,items:[],history:[]})));
+test('reject excessively large backup',()=>assert.throws(()=>parseBackup('x'.repeat(20_000_001))));
+test('missing IndexedDB fails explicitly',()=>assert.rejects(openLocalDatabase(null),/IndexedDB unavailable/));
