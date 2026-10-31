@@ -1,0 +1,38 @@
+name: Development preview package
+on:
+  push:
+    branches:
+      - development/p0-baseline-20261031
+  workflow_dispatch:
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run regression suite
+        run: |
+          node --test tests/*.test.mjs
+          node scripts/check-ui-syntax.mjs
+      - name: Bundle self-contained development preview
+        run: |
+          mkdir -p preview/diagnostics preview/src/ocr preview/src/intake
+          cp diagnostics/ocr-lab.html diagnostics/intake-lab.html preview/diagnostics/
+          cp src/ocr/*.mjs preview/src/ocr/
+          cp src/intake/*.mjs preview/src/intake/
+          cat > preview/README.txt <<'EOF'
+          Zaisyo inspection development diagnostic preview.
+          Open via an HTTPS static host or localhost HTTP server.
+          Browser file:// does not reliably allow JS modules.
+          This is not a production deployment and contains no business data.
+          Suggested local server: python -m http.server 8000 --directory preview
+          Then visit http://localhost:8000/diagnostics/intake-lab.html
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inspection-development-preview
+          path: preview/
+          if-no-files-found: error
+          retention-days: 14
