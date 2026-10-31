@@ -18,3 +18,22 @@ jobs:
         run: node scripts/check-ui-syntax.mjs
       - name: Baseline source structure
         run: node scripts/baseline_audit.mjs
+      - name: Package and verify diagnostic preview
+        if: github.ref == 'refs/heads/development/p0-baseline-20261031'
+        run: |
+          mkdir -p preview/diagnostics preview/src/ocr preview/src/intake preview/src/storage
+          cp diagnostics/index.html preview/index.html
+          cp diagnostics/ocr-lab.html diagnostics/intake-lab.html diagnostics/delivery-note-lab.html preview/diagnostics/
+          cp src/ocr/*.mjs preview/src/ocr/
+          cp src/intake/*.mjs preview/src/intake/
+          cp src/storage/*.mjs preview/src/storage/
+          printf '%s\n' 'Development diagnostics only. Serve over HTTPS or localhost.' > preview/README.txt
+          node scripts/verify-preview.mjs preview
+      - name: Upload verified preview ZIP
+        if: github.ref == 'refs/heads/development/p0-baseline-20261031'
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspection-development-preview
+          path: preview/
+          if-no-files-found: error
+          retention-days: 14
