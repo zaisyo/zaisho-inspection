@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>材庄 検品予定取り込み検証</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#142b3f;background:#edf2f6}*{box-sizing:border-box}
+body{margin:0}header{background:#133c61;color:white;padding:16px}main{max-width:820px;margin:auto;padding:12px 12px 50px}
+section{background:white;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 2px 8px #1232}
+h1{font-size:22px;margin:0}h2{font-size:18px}p{line-height:1.6}label{display:block;margin:10px 0 5px}
+input,textarea,button{font:inherit}input:not([type=file]),textarea{width:100%;border:1px solid #a8b7c6;border-radius:8px;padding:10px}textarea{min-height:135px}
+button{background:#17649f;color:white;border:0;border-radius:8px;padding:11px 14px;margin:5px 3px 5px 0;font-weight:bold}
+button.secondary{background:#e3ebf2;color:#17354c}button:disabled{opacity:.4}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px solid #ddd;text-align:left;padding:8px;overflow-wrap:anywhere}
+.scroll{overflow:auto}small{color:#5a6975}.error{color:#a11d31;white-space:pre-wrap}.good{color:#147145}.hint{background:#eef6fc;border-radius:7px;padding:9px}
+</style></head><body><header><h1>材庄｜納品予定取り込み検証</h1><div>開発用・本番データとは分離</div></header><main>
+<section><h2>① 納品予定の読み込み</h2><p class="hint">Excelから「品番・数量」を含む表をコピーして貼り付けるか、CSV・TSVファイルを選択してください。明細の品番は重複を検出し、不正な行が1件でもあれば確定できません。</p>
+<label for="file">CSV / TSV ファイル</label><input id="file" type="file" accept=".csv,.tsv,text/csv,text/plain">
+<label for="data">貼り付けデータ（UTF-8）</label><textarea id="data" placeholder="品番,数量,品名&#10;PTEC39,2,商品A&#10;AB-12,1,商品B"></textarea>
+<button id="preview">内容を検証してプレビュー</button><button id="demo" class="secondary">テスト用サンプル入力</button>
+<div id="errors" class="error" role="alert"></div><div id="status" aria-live="polite"></div>
+<div class="scroll"><table><thead><tr><th>品番</th><th>予定数量</th><th>品名</th><th>管理No.</th></tr></thead><tbody id="previewRows"></tbody></table></div>
+<button id="commit" disabled>内容を確認して検品予定に登録</button><button id="clear" class="secondary">データを初期化</button></section>
+<section><h2>② 読み取り照合の動作確認</h2><p>ここでは品番を手入力してスキャン相当の照合を確認します。カメラ・QRスキャンとの接続は次の工程です。</p>
+<label for="part">検品品番</label><input id="part" placeholder="PTEC39" autocomplete="off">
+<button id="check">照合する</button><p id="scanStatus" aria-live="polite"></p><button id="confirm" disabled>確認して1個検品</button>
+<div class="scroll"><table><thead><tr><th>品番</th><th>検品済 / 予定</th><th>状態</th></tr></thead><tbody id="activeRows"></tbody></table></div>
+<button id="export" class="secondary" disabled>結果CSV出力</button></section>
+<section><h2>③ 動作上の注意</h2><p>この試験ページはブラウザのメモリ内だけで検証します。再読み込みするとデータは消えます。個人情報を含む納品書はここへ入力しないでください。正式版では案件別の保存・バックアップ・復元を実装します。</p></section>
+</main><script type="module">
+import {parseIntake,checkScan} from '../src/intake/intake.mjs';
+const $=id=>document.getElementById(id);let draft=null,items=[],pending=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const getFile=async file=>{const bytes=new Uint8Array(await file.arrayBuffer());let decoded=new TextDecoder('utf-8',{fatal:false}).decode(bytes);if(decoded.includes('\uFFFD'))throw Error('文字コードをUTF-8にして保存し直してください');return decoded};
+$('file').onchange=async()=>{const f=$('file').files[0];if(!f)return;try{$('data').value=await getFile(f);resetDraft();$('status').textContent='ファイルを読み込みました。内容を検証してください。'}catch(e){$('errors').textContent=String(e);resetDraft()}};
+function resetDraft(){draft=null;$('commit').disabled=true;$('previewRows').replaceChildren()}
+$('data').oninput=()=>{resetDraft();$('errors').textContent='';$('status').textContent='変更されたため、もう一度検証してください。'};
+$('demo').onclick=()=>{$('data').value='品番,数量,品名\nPTEC39,2,サンプルA\nAB-12,1,サンプルB';resetDraft()};
+$('preview').onclick=()=>{resetDraft();try{const r=parseIntake($('data').value);$('errors').textContent=r.errors.map(e=>e.row+'行目 '+e.part+': '+e.reasons.join(', ')).join('\n');$('status').textContent=r.items.length+'明細を確認しました'+(r.errors.length?'／エラー '+r.errors.length+'件':'');draft=r.errors.length?null:r.items;$('commit').disabled=!draft?.length;
+$('previewRows').innerHTML=r.items.map(x=>'<tr><td>'+esc(x.part)+'</td><td>'+x.qty+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.management)+'</td></tr>').join('');
+}catch(e){$('errors').textContent='読み込みエラー: '+String(e)}};
+function paint(){const done=items.reduce((a,x)=>a+x.done,0),total=items.reduce((a,x)=>a+x.qty,0);$('activeRows').innerHTML=items.map(x=>'<tr><td>'+esc(x.part)+'</td><td>'+x.done+' / '+x.qty+'</td><td>'+(x.done===x.qty?'完了':'未完了')+'</td></tr>').join('');$('scanStatus').textContent='進捗 '+done+' / '+total;$('export').disabled=!items.length;}
+$('commit').onclick=()=>{if(!draft?.length)return;if(!confirm(draft.length+'件の予定明細を登録しますか？既存の試験データは置き換えられます。'))return;items=structuredClone(draft);pending=null;$('confirm').disabled=true;$('errors').textContent='';$('status').textContent='検品予定を登録しました。';paint()};
+$('check').onclick=()=>{pending=null;$('confirm').disabled=true;const r=checkScan(items,$('part').value);if(r.status==='READY_TO_CONFIRM'){pending=r;$('scanStatus').textContent='一致：'+$('part').value+'／残り '+r.remaining+' 個。確認後に確定してください。';$('confirm').disabled=false}else{$('scanStatus').textContent='照合できません：'+r.status}};
+$('confirm').onclick=()=>{if(!pending)return;const x=items.find(v=>v.id===pending.itemId);if(!x){pending=null;return}const r=checkScan(items,x.part,1);if(r.status!=='READY_TO_CONFIRM'||r.itemId!==pending.itemId){$('scanStatus').textContent='確定直前に照合条件が変わりました。やり直してください。';pending=null;$('confirm').disabled=true;return}x.done++;pending=null;$('confirm').disabled=true;paint()};
+$('clear').onclick=()=>{if(!confirm('試験データをすべて初期化しますか？'))return;items=[];pending=null;resetDraft();$('confirm').disabled=true;$('errors').textContent='';$('data').value='';$('status').textContent='初期化しました';paint()};
+$('export').onclick=()=>{const rows=[['品番','品名','予定数量','検品済数量','管理No.','件管No.'],...items.map(x=>[x.part,x.name,x.qty,x.done,x.management,x.caseNo])];const csv='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='inspection-preview.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+paint();
+</script></body></html>
