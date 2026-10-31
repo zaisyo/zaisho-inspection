@@ -14,5 +14,7 @@ jobs:
           node-version: '22'
       - name: Run every regression test
         run: node --test tests/*.test.mjs
+      - name: Validate diagnostic page JS syntax
+        run: node scripts/check-ui-syntax.mjs
       - name: Baseline source structure
         run: node scripts/baseline_audit.mjs
