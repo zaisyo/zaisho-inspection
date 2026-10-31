@@ -19,6 +19,7 @@ jobs:
       - name: Bundle self-contained development preview
         run: |
           mkdir -p preview/diagnostics preview/src/ocr preview/src/intake preview/src/storage
+          cp diagnostics/index.html preview/index.html
           cp diagnostics/ocr-lab.html diagnostics/intake-lab.html diagnostics/delivery-note-lab.html preview/diagnostics/
           cp src/ocr/*.mjs preview/src/ocr/
           cp src/intake/*.mjs preview/src/intake/
