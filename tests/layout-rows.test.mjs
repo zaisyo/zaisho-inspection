@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {extractLayoutRows} from '../src/ocr/layout-rows.mjs';
+const word=(text,x,y)=>({text,bbox:{x0:x,y0:y,x1:x+40,y1:y+20}});
+const config={partColumn:[0,140],quantityColumn:[200,300]};
+test('pairs columns only in the same row',()=>{const r=extractLayoutRows([word('AB12',20,100),word('2個',220,100),word('CD34',20,200),word('3個',220,200)],config);assert.deepEqual(r.candidates.map(x=>x.qty),[2,3])});
+test('does not combine quantity on distant row',()=>{const r=extractLayoutRows([word('AB12',20,100),word('2個',220,200)],config);assert.equal(r.candidates.length,0);assert.equal(r.review[0].reason,'NO_QUANTITY')});
+test('ambiguous quantities must be reviewed',()=>{const r=extractLayoutRows([word('AB12',20,100),word('2',210,100),word('3000',230,100)],config);assert.equal(r.candidates.length,0);assert.equal(r.review[0].reason,'AMBIGUOUS_QUANTITY')});
+test('requires explicit disjoint columns',()=>assert.throws(()=>extractLayoutRows([word('AB12',20,100)],{partColumn:[0,200],quantityColumn:[100,300]})));
+test('does not accept absent quantity',()=>assert.equal(extractLayoutRows([word('AB12',20,100)],config).candidates.length,0));
