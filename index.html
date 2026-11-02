@@ -43,9 +43,45 @@ function findPartCandidates(text){const normalized=String(text||'').toUpperCase(
 // Letters and digits Tesseract confuses are folded to the same character before comparing.
 function foldPart(s){return normalizeCode(s).replace(/-/g,'').replace(/[OQD]/g,'0').replace(/[IL]/g,'1').replace(/B/g,'8').replace(/S/g,'5').replace(/Z/g,'2')}
 function editDistance(a,b){let prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const cur=[i];for(let j=1;j<=b.length;j++)cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));prev=cur}return prev[b.length]}
-function matchPlanned(texts,parts){const lines=texts.flatMap(t=>[...String(t||'').split(/\r?\n/),...String(t||'').split(/\s+/)]).map(foldPart).filter(Boolean),out=[];for(const part of new Set(parts)){const p=foldPart(part);if(!p)continue;const exact=lines.includes(p),contained=p.length>=4&&lines.some(l=>l.includes(p));let distance=exact||contained?0:Infinity;if(p.length>=5)for(const l of lines)for(const c of l.match(/[A-Z0-9]{4,26}/g)||[])distance=Math.min(distance,editDistance(c,p));if(distance<=1)out.push({part,distance})}return out.sort((a,b)=>a.distance-b.distance)}
+function exactOcrTokens(text){return new Set(findPartCandidates(text).map(normalizeCode))}
+function oneCharDiff(a,b){a=normalizeCode(a);b=normalizeCode(b);if(a.length!==b.length)return -1;let count=0;for(let i=0;i<a.length;i++)if(a[i]!==b[i])count++;return count}
+function matchPlanned(texts,parts){const tokens=texts.flatMap(t=>findPartCandidates(t)), uniqueParts=[...new Set(parts.map(normalizeCode).filter(Boolean))],out=[];for(const part of uniqueParts){let distance=Infinity,support=0;for(const token of tokens){const raw=normalizeCode(token),d=editDistance(raw,part);distance=Math.min(distance,d);if(d===0)support++}if(distance<=1)out.push({part,distance,support})}return out.sort((a,b)=>a.distance-b.distance||b.support-a.support)}
+// The planned list is a constraint, never proof of what is printed.
+// Treat one-character-neighbor planned SKUs as an ambiguity even when OCR returns an exact match.
+function decideOcrPart(readings,parts){
+ const planned=[...new Set(parts.map(normalizeCode).filter(Boolean))];
+ const votes=new Map();const all=[];
+ for(const r of readings){const tokens=exactOcrTokens(r.text);for(const token of tokens){all.push(token);if(planned.includes(token)){let v=votes.get(token)||new Set();v.add(r.variant);votes.set(token,v)}}}
+ const ranked=matchPlanned(readings.map(r=>r.text),planned);
+ const confirmed=[...votes.entries()].filter(([,v])=>v.size>=2);
+ const conflict=confirmed.length!==1||[...votes.keys()].some(p=>p!==confirmed[0]?.[0]);
+ const winner=confirmed[0]?.[0];
+ const neighbors=winner?planned.filter(p=>p!==winner&&oneCharDiff(p,winner)===1):[];
+ // Distinct transformations of the SAME photograph can repeat the same error.
+ // In a one-character-neighbor conflict request manual verification rather than false confirmation.
+ const safe=!!winner&&!conflict&&!neighbors.length;
+ return {status:safe?'strong':ranked.length?'ambiguous':'none',part:safe?winner:'',ranked,neighbors,readings};
+}
 function showCandidates(list){const box=$('ocrCandidates');box.innerHTML='';if(!list.length)return;const title=document.createElement('p');title.className='mini';title.textContent='候補をタップして選択（写真と照合してください）';box.appendChild(title);for(const c of list){const b=document.createElement('button');b.type='button';b.className='secondary smallbtn';b.style.margin='0 6px 6px 0';b.textContent=c.part+(c.planned?'（予定あり）':'');b.onclick=()=>{$('labelPart').value=c.part};box.appendChild(b)}}
-$('ocrRun').onclick=async()=>{const f=$('ocrImage').files?.[0];if(!f){ocrMessage('先に写真を選択してください。','bad');return}const btn=$('ocrRun'),t0=performance.now(),sec=n=>(n/1000).toFixed(2)+'秒';btn.disabled=true;$('ocrCandidates').innerHTML='';try{$('ocrTiming').textContent='処理時間：測定中…';ocrMessage('まずQRコードを探しています…');const q=await qrFromPhoto(f);if(q){const p=parseQR(q);if(p.part){$('labelPart').value=p.part;$('labelManagement').value=p.management;$('labelCase').value=p.caseNo;const qm=/^Q(\d+)$/i.exec(p.q||'');$('labelQty').value=qm?qm[1]:'';$('ocrTiming').textContent='QR読取 '+sec(performance.now()-t0)+'（OCR省略）';ocrMessage('QRコードから読み取りました。品番 '+p.part+' / 管理 '+(p.management||'-')+' / 件管 '+(p.caseNo||'-')+' / 数量 '+(qm?qm[1]:'要確認'),'ok');return}}ocrMessage('QRなし。OCRを準備中…');const worker=await getPartWorker();const r=ocrRect(),img=$('ocrPreview'),tall=r.h*img.naturalHeight>r.w*img.naturalWidth,parts=state.items.map(x=>x.part),texts=[];let planned=[];for(const deg of tall?[90,270]:[0,180]){ocrMessage('品番を認識中…（'+deg+'度）');const {gray,binary}=await preprocessLabel(f,deg);texts.push((await worker.recognize(gray)).data.text,(await worker.recognize(binary)).data.text);planned=matchPlanned(texts,parts);if(planned[0]?.distance===0)break}const raw=[...new Set(texts.flatMap(findPartCandidates))].filter(c=>!planned.some(x=>normalizeCode(x.part)===normalizeCode(c)));const list=[...planned.map(x=>({part:x.part,planned:true})),...raw.map(part=>({part,planned:false}))];showCandidates(list);$('labelPart').value=list[0]?.part||'';$('labelManagement').value='';$('labelCase').value='';$('labelQty').value='';$('ocrTiming').textContent='OCR合計 '+sec(performance.now()-t0);if(planned.length)ocrMessage('検品予定の品番 '+planned[0].part+' と一致しました'+(planned[0].distance?'（1文字違い）':'')+'。写真と照合してください。','ok');else if(list.length)ocrMessage('検品予定との一致はありません。候補を写真と照合し、必要なら修正してください。');else ocrMessage('品番を読み取れませんでした。緑枠を品番の行に合わせ直すか、手入力してください。','bad')}catch(e){ocrMessage('読み取りに失敗：'+(e.message||e),'bad');$('ocrTiming').textContent='処理失敗まで '+sec(performance.now()-t0)}finally{btn.disabled=false}};
+$('ocrRun').onclick=async()=>{const f=$('ocrImage').files?.[0];if(!f){ocrMessage('先に写真を選択してください。','bad');return}const btn=$('ocrRun'),t0=performance.now(),sec=n=>(n/1000).toFixed(2)+'秒';btn.disabled=true;$('ocrCandidates').innerHTML='';$('labelPart').value='';try{
+$('ocrTiming').textContent='処理時間：測定中…';ocrMessage('まずQRコードを探しています…');
+const q=await qrFromPhoto(f);if(q){const p=parseQR(q);if(p.part){$('labelPart').value=p.part;$('labelManagement').value=p.management;$('labelCase').value=p.caseNo;const qm=/^Q(\d+)$/i.exec(p.q||'');$('labelQty').value=qm?qm[1]:'';$('ocrTiming').textContent='QR読取 '+sec(performance.now()-t0)+'（OCR省略）';ocrMessage('QRコードから読み取りました。品番 '+p.part+' / 管理 '+(p.management||'-')+' / 件管 '+(p.caseNo||'-')+' / 数量 '+(qm?qm[1]:'要確認'),'ok');return}}
+ocrMessage('QRなし。OCRを準備中…');const worker=await getPartWorker(),r=ocrRect(),img=$('ocrPreview'),tall=r.h*img.naturalHeight>r.w*img.naturalWidth,parts=state.items.map(x=>x.part),readings=[];
+for(const deg of tall?[90,270]:[0,180]){ocrMessage('品番を認識中…（'+deg+'度）');const {gray,binary}=await preprocessLabel(f,deg);const first=await worker.recognize(gray);readings.push({variant:'gray-'+deg,text:first.data.text});let decision=decideOcrPart(readings,parts);
+if(decision.status!=='strong'){ocrMessage('判定を再確認中…（2値化画像）');const second=await worker.recognize(binary);readings.push({variant:'binary-'+deg,text:second.data.text});decision=decideOcrPart(readings,parts)}
+if(decision.status==='strong')break;
+}
+const decision=decideOcrPart(readings,parts),planned=decision.ranked;
+const raw=[...new Set(readings.flatMap(r=>findPartCandidates(r.text)))].filter(c=>!planned.some(x=>normalizeCode(x.part)===normalizeCode(c)));
+const list=[...planned.map(x=>({part:x.part,planned:true})),...raw.map(part=>({part,planned:false}))];
+showCandidates(list);$('labelPart').value=decision.part;
+$('labelManagement').value='';$('labelCase').value='';$('labelQty').value='';
+$('ocrTiming').textContent='OCR合計 '+sec(performance.now()-t0);
+if(decision.status==='strong')ocrMessage('OCRを複数画像で照合：'+decision.part+'。写真と照合し、検品操作で確定してください。','ok');
+else if(planned.length)ocrMessage('品番を自動確定できません。1文字違い・誤読の可能性があります。写真を確認し、下の候補を選ぶか品番を手入力してください。','bad');
+else if(list.length)ocrMessage('検品予定との一致はありません。写真と照合し、必要なら修正してください。');
+else ocrMessage('品番を読み取れませんでした。緑枠を品番の行に合わせ直すか、手入力してください。','bad')
+}catch(e){ocrMessage('読み取りに失敗：'+(e.message||e),'bad');$('ocrTiming').textContent='処理失敗まで '+sec(performance.now()-t0)}finally{btn.disabled=false}};
 async function qrFromPhoto(file){let bmp=null;try{bmp=await createImageBitmap(file);const mk=max=>{const s=Math.min(1,max/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*s));c.height=Math.max(1,Math.round(bmp.height*s));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);return c};const pick=list=>{const raws=list.map(x=>x.rawValue||x).filter(Boolean);return raws.find(r=>parseQR(r).part)||''};if('BarcodeDetector' in window){try{const sup=await BarcodeDetector.getSupportedFormats();const det=new BarcodeDetector({formats:['qr_code','data_matrix'].filter(x=>sup.includes(x))});for(const m of [2400,1200]){const r=pick(await det.detect(mk(m)));if(r)return r}}catch(e){}}
 try{await loadScanner();const holder=document.createElement('div');holder.id='qr-file-tmp';holder.style.display='none';document.body.appendChild(holder);try{const sc=new Html5Qrcode('qr-file-tmp',{verbose:false});for(const m of [1600,1000]){const blob=await new Promise(res=>mk(m).toBlob(res,'image/png'));try{const t=await sc.scanFile(new File([blob],'p.png',{type:'image/png'}),false);if(t&&parseQR(t).part)return t}catch(e){}}}finally{holder.remove()}}catch(e){}
 return ''}catch(e){return ''}finally{if(bmp)bmp.close()}}
