@@ -1,0 +1,4 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {summarizeAttempts,attemptsCsv} from '../src/ocr/attempt-metrics.mjs';
+test('failure rate and initial versus subsequent timing',()=>{const r=summarizeAttempts([{status:'success',elapsedMs:3000},{status:'failure',elapsedMs:500},{status:'success',elapsedMs:1000},{status:'success',elapsedMs:1400}]);assert.equal(r.failureRate,.25);assert.equal(r.firstSuccessMs,3000);assert.equal(r.laterAvgMs,1200)});
+test('handles zero attempts without NaN',()=>{const r=summarizeAttempts([]);assert.equal(r.failureRate,null);assert.equal(r.firstSuccessMs,null)});
+test('does not export recognized text',()=>{const csv=attemptsCsv([{status:'success',elapsedMs:2000,initMs:200,recognizeMs:1800,rawText:'PRIVATE'}]);assert.ok(!csv.includes('PRIVATE'));assert.ok(csv.includes('2000'))});

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>材庄 検品予定取り込み検証</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#142b3f;background:#edf2f6}*{box-sizing:border-box}
+body{margin:0}header{background:#133c61;color:white;padding:16px}main{max-width:820px;margin:auto;padding:12px 12px 50px}
+section{background:white;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 2px 8px #1232}
+h1{font-size:22px;margin:0}h2{font-size:18px}p{line-height:1.6}label{display:block;margin:10px 0 5px}
+input,textarea,button{font:inherit}input:not([type=file]),textarea{width:100%;border:1px solid #a8b7c6;border-radius:8px;padding:10px}textarea{min-height:135px}
+button{background:#17649f;color:white;border:0;border-radius:8px;padding:11px 14px;margin:5px 3px 5px 0;font-weight:bold}
+button.secondary{background:#e3ebf2;color:#17354c}button:disabled{opacity:.4}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px solid #ddd;text-align:left;padding:8px;overflow-wrap:anywhere}
+.scroll{overflow:auto}small{color:#5a6975}.error{color:#a11d31;white-space:pre-wrap}.good{color:#147145}.hint{background:#eef6fc;border-radius:7px;padding:9px}
+</style></head><body><header><h1>材庄｜納品予定取り込み検証</h1><div>開発用・本番データとは分離</div></header><main>
+<section><h2>① 納品予定の読み込み</h2><p class="hint">Excelから「品番・数量」を含む表をコピーして貼り付けるか、CSV・TSVファイルを選択してください。明細の品番は重複を検出し、不正な行が1件でもあれば確定できません。</p>
+<label for="file">CSV / TSV ファイル</label><input id="file" type="file" accept=".csv,.tsv,text/csv,text/plain">
+<label for="data">貼り付けデータ（UTF-8）</label><textarea id="data" placeholder="品番,数量,品名&#10;PTEC39,2,商品A&#10;AB-12,1,商品B"></textarea>
+<button id="preview">内容を検証してプレビュー</button><button id="demo" class="secondary">テスト用サンプル入力</button>
+<div id="errors" class="error" role="alert"></div><div id="status" aria-live="polite"></div>
+<div class="scroll"><table><thead><tr><th>品番</th><th>予定数量</th><th>品名</th><th>管理No.</th></tr></thead><tbody id="previewRows"></tbody></table></div>
+<button id="commit" disabled>内容を確認して検品予定に登録</button><button id="clear" class="secondary">データを初期化</button></section>
+<section><h2>② 読み取り照合の動作確認</h2><p>ここでは品番を手入力してスキャン相当の照合を確認します。カメラ・QRスキャンとの接続は次の工程です。</p>
+<div class="hint"><strong>カメラ読み取り（検証版）</strong><p>端末が BarcodeDetector に対応している場合に使用できます。QRやJANは品番そのものとは限りません。未登録コードは検品せず停止します。</p><button id="cameraStart" type="button">カメラで読み取る</button><button id="cameraStop" type="button" class="secondary">カメラ停止</button><video id="camera" autoplay muted playsinline style="width:100%;max-height:260px;display:none;background:#172634"></video><div id="fallbackReader" style="width:100%;max-width:500px"></div><div id="cameraStatus" aria-live="polite"></div><label for="rawCode">読み取ったコード（原文）</label><input id="rawCode" readonly placeholder="未読取"><p><small>複合QR等の解析は未実装です。品番の完全一致以外は確認・対応付けが必要です。</small></p></div><div class="hint"><strong>OCR文字列から品番候補を照合（試験版）</strong><p>OCR診断ラボで読み取った文字列を貼り付けます。完全一致候補を表示しますが、自動で検品確定しません。</p><label>ラベル写真を選択<input id="labelPhoto" type="file" accept="image/*" capture="environment"></label><p>写真上で品番の領域を指で囲んでください。範囲指定しなければ全体を認識します。</p><div id="labelStage" style="position:relative;display:inline-block;max-width:100%;touch-action:none"><img id="labelPreview" style="max-width:100%;max-height:320px;display:block"><div id="labelRoi" style="position:absolute;inset:0;border:2px solid #05a66c;pointer-events:none"></div></div><button id="roiReset" class="secondary">範囲を全体に戻す</button><label><input id="ocrCompareMode" type="checkbox"> 無補正・グレースケールを比較する（認識2回）</label><button id="labelRecognize">写真をOCR</button><pre id="labelOcrTiming" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><div id="labelOcrCompare"></div><div id="labelOcrStatus" role="status"></div><textarea id="ocrInput" placeholder="OCR認識結果を貼り付け・修正"></textarea><button id="ocrMatch" type="button">OCR候補を照合</button><div id="ocrMatchResult" aria-live="polite"></div><button id="ocrUse" type="button" disabled>一致候補を検品品番へ転記（要確認）</button></div><label for="part">検品品番</label><input id="part" placeholder="PTEC39" autocomplete="off">
+<button id="check">照合する</button><p id="scanStatus" aria-live="polite"></p><button id="confirm" disabled>確認して1個検品</button>
+<div class="scroll"><table><thead><tr><th>品番</th><th>検品済 / 予定</th><th>状態</th></tr></thead><tbody id="activeRows"></tbody></table></div>
+<button id="export" class="secondary" disabled>結果CSV出力</button><button id="exportHistory" class="secondary" disabled>検品履歴CSV出力</button><p id="historyCount"></p></section>
+<section><h2>③ 保存・バックアップ（開発版）</h2><p>この端末内のIndexedDBに保存します。端末のストレージ削除に備えてJSONバックアップを別途保存してください。</p><button id="saveLocal">端末内に保存</button><button id="loadLocal">端末内から読み込む</button><button id="downloadBackup" class="secondary">JSONバックアップ出力</button><label>JSONバックアップを復元（現在のデータと置換）<input id="restoreFile" type="file" accept=".json,application/json"></label><button id="restoreBackup" class="secondary">選択したバックアップを復元</button><div id="storageStatus" role="status"></div></section><section><h2>④ 動作上の注意</h2><p>この試験ページは検品確定時に端末へ自動保存を試みます。保存エラー時はJSONバックアップを保存してください。業務利用前の試験版です。個人情報を含む納品書はここへ入力しないでください。正式版では案件別の保存・バックアップ・復元を実装します。</p></section>
+</main><script type="module">
+import {parseIntake,checkScan} from '../src/intake/intake.mjs';
+import {candidateStatus,renderRegion,normalizeRect} from '../src/ocr/diagnostics.mjs';
+import {createSnapshot,saveLocal,loadLocal,parseBackup,exportBackup} from '../src/storage/local.mjs';
+const $=id=>document.getElementById(id);let draft=null,items=[],history=[],pending=null,ocrCandidate=null,scanSource='manual',stream=null,scanActive=false,scanToken=0,fallbackScanner=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const getFile=async file=>{const bytes=new Uint8Array(await file.arrayBuffer());let decoded=new TextDecoder('utf-8',{fatal:false}).decode(bytes);if(decoded.includes('\uFFFD'))throw Error('文字コードをUTF-8にして保存し直してください');return decoded};
+$('file').onchange=async()=>{const f=$('file').files[0];if(!f)return;try{$('data').value=await getFile(f);resetDraft();$('status').textContent='ファイルを読み込みました。内容を検証してください。'}catch(e){$('errors').textContent=String(e);resetDraft()}};
+function resetDraft(){draft=null;$('commit').disabled=true;$('previewRows').replaceChildren()}
+$('data').oninput=()=>{resetDraft();$('errors').textContent='';$('status').textContent='変更されたため、もう一度検証してください。'};
+$('demo').onclick=()=>{$('data').value='品番,数量,品名\nPTEC39,2,サンプルA\nAB-12,1,サンプルB';resetDraft()};
+$('preview').onclick=()=>{resetDraft();try{const r=parseIntake($('data').value);$('errors').textContent=r.errors.map(e=>e.row+'行目 '+e.part+': '+e.reasons.join(', ')).join('\n');$('status').textContent=r.items.length+'明細を確認しました'+(r.errors.length?'／エラー '+r.errors.length+'件':'');draft=r.errors.length?null:r.items;$('commit').disabled=!draft?.length;
+$('previewRows').innerHTML=r.items.map(x=>'<tr><td>'+esc(x.part)+'</td><td>'+x.qty+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.management)+'</td></tr>').join('');
+}catch(e){$('errors').textContent='読み込みエラー: '+String(e)}};
+function paint(){const done=items.reduce((a,x)=>a+x.done,0),total=items.reduce((a,x)=>a+x.qty,0);$('activeRows').innerHTML=items.map(x=>'<tr><td>'+esc(x.part)+'</td><td>'+x.done+' / '+x.qty+'</td><td>'+(x.done===x.qty?'完了':'未完了')+'</td></tr>').join('');$('scanStatus').textContent='進捗 '+done+' / '+total;$('export').disabled=!items.length;$('exportHistory').disabled=!history.length;$('historyCount').textContent='検品履歴 '+history.length+' 件';}
+$('commit').onclick=()=>{if(!draft?.length)return;if(!confirm(draft.length+'件の予定明細を登録しますか？既存の試験データは置き換えられます。'))return;items=structuredClone(draft);history=[];pending=null;ocrCandidate=null;$('ocrUse').disabled=true;$('confirm').disabled=true;$('errors').textContent='';$('status').textContent='検品予定を登録しました。';paint();void persist()};
+async function stopCamera(){scanActive=false;scanToken++;if(fallbackScanner){const old=fallbackScanner;fallbackScanner=null;try{await old.stop()}catch(e){}try{old.clear()}catch(e){}}if(stream){for(const track of stream.getTracks())track.stop();stream=null;}$('camera').srcObject=null;$('camera').style.display='none'}
+async function handleCode(code){scanSource='barcode';$('rawCode').value=code;await stopCamera();const matching=items.filter(x=>x.part===code.toUpperCase());if(matching.length===1){$('part').value=matching[0].part;$('check').click();$('cameraStatus').textContent='登録品番と完全一致。内容を確認して確定してください。'}else{$('part').value='';pending=null;$('confirm').disabled=true;$('cameraStatus').textContent='未登録または複合コードです。自動確定しません。'}} 
+async function startFallback(){if(!globalThis.Html5Qrcode){await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';script.onload=resolve;script.onerror=()=>reject(Error('代替ライブラリをダウンロードできません'));document.head.append(script)})}
+fallbackScanner=new Html5Qrcode('fallbackReader');scanActive=true;await fallbackScanner.start({facingMode:'environment'},{fps:10,qrbox:250},async code=>{if(!scanActive)return;scanActive=false;await handleCode(String(code).trim())},()=>{});$('cameraStatus').textContent='代替スキャナー起動中（html5-qrcode）'}
+$('cameraStop').onclick=async()=>{await stopCamera();$('cameraStatus').textContent='カメラ停止'};
+$('cameraStart').onclick=async()=>{await stopCamera();if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){$('cameraStatus').textContent='HTTPSが必要です';return}
+ if(!('BarcodeDetector' in window)){try{await startFallback()}catch(e){await stopCamera();$('cameraStatus').textContent='代替スキャナー起動失敗：'+String(e)}return}
+ try{const formats=await BarcodeDetector.getSupportedFormats(),available=['qr_code','code_128','code_39','ean_13','ean_8','itf','data_matrix'].filter(x=>formats.includes(x));if(!available.length){await startFallback();return}
+ const detector=new BarcodeDetector({formats:available});stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});const video=$('camera');video.srcObject=stream;video.style.display='block';await video.play();scanActive=true;const token=++scanToken;$('cameraStatus').textContent='読み取り待機中';
+ const loop=async()=>{if(!scanActive||token!==scanToken)return;try{if(video.readyState>=2){const found=await detector.detect(video);if(found.length){const code=String(found[0].rawValue??'').trim();await handleCode(code);return}}}catch(err){$('cameraStatus').textContent='検出エラー: '+String(err)}
+ if(scanActive&&token===scanToken)requestAnimationFrame(loop)};requestAnimationFrame(loop)
+ }catch(e){await stopCamera();$('cameraStatus').textContent='カメラ起動失敗: '+String(e)}};
+
+let labelFile=null,labelUrl=null,labelStart=null,labelRect={x:0,y:0,w:1,h:1},labelWorker=null;
+function showRect(){const v=$('labelRoi');v.style.left=(100*labelRect.x)+'%';v.style.top=(100*labelRect.y)+'%';v.style.width=(100*labelRect.w)+'%';v.style.height=(100*labelRect.h)+'%'}
+function labelPoint(e){const r=$('labelPreview').getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))}}
+$('labelPhoto').onchange=()=>{labelFile=$('labelPhoto').files?.[0]||null;if(labelUrl)URL.revokeObjectURL(labelUrl);if(!labelFile)return;labelUrl=URL.createObjectURL(labelFile);$('labelPreview').src=labelUrl;labelRect={x:0,y:0,w:1,h:1};showRect();$('labelOcrStatus').textContent='画像を選択しました'};
+$('roiReset').onclick=()=>{labelRect={x:0,y:0,w:1,h:1};showRect()};
+$('labelStage').onpointerdown=e=>{if(!labelFile)return;labelStart=labelPoint(e);$('labelStage').setPointerCapture(e.pointerId)};
+$('labelStage').onpointermove=e=>{if(!labelStart)return;const p=labelPoint(e),x=Math.min(labelStart.x,p.x),y=Math.min(labelStart.y,p.y),w=Math.abs(labelStart.x-p.x),h=Math.abs(labelStart.y-p.y);if(w>.005&&h>.005){labelRect=normalizeRect({x,y,w,h});showRect()}};
+$('labelStage').onpointerup=()=>{labelStart=null};
+$('labelStage').onpointercancel=()=>{labelStart=null};
+async function getLabelWorker(){if(labelWorker)return labelWorker;if(!globalThis.Tesseract){await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';script.onload=resolve;script.onerror=()=>reject(new Error('OCRライブラリの取得失敗'));document.head.append(script)})}labelWorker=await Tesseract.createWorker('eng',1);await labelWorker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SINGLE_LINE,tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./_'});return labelWorker}
+$('labelRecognize').onclick=async()=>{if(!labelFile){$('labelOcrStatus').textContent='写真を選択してください';return}
+ const btn=$('labelRecognize'),begin=performance.now(),timings={},variants=[];btn.disabled=true;$('ocrUse').disabled=true;ocrCandidate=null;$('labelOcrCompare').textContent='';
+ const oldFile=labelFile,oldRect={...labelRect};
+ try{
+  $('labelOcrStatus').textContent='OCRエンジン準備中';let t=performance.now();const worker=await getLabelWorker();timings.workerMs=+(performance.now()-t).toFixed(1);
+  for(const gray of ($('ocrCompareMode').checked?[false,true]:[false])){
+   if(labelFile!==oldFile)throw Error('処理中に写真が変更されました');
+   const variant=gray?'grayscale':'original';t=performance.now();
+   const rendered=await renderRegion(oldFile,oldRect,{gray});timings[variant+'RenderMs']=+(performance.now()-t).toFixed(1);
+   t=performance.now();$('labelOcrStatus').textContent=variant+'：文字認識中';
+   const recognized=await worker.recognize(rendered.canvas);timings[variant+'OcrMs']=+(performance.now()-t).toFixed(1);
+   const text=String(recognized.data.text||'');const assessment=candidateStatus(text,items.map(x=>x.part));
+   variants.push({variant,text,assessment,crop:rendered.crop,source:rendered.source,output:rendered.output});
+  }
+  if(labelFile!==oldFile)throw Error('処理中に写真が変更されました');
+  const best=variants.find(v=>v.assessment.exact.length===1)||variants[0];
+  $('ocrInput').value=best.text;$('ocrMatch').click();
+  $('labelOcrCompare').textContent=variants.map(v=>v.variant+'：候補 '+(v.assessment.matches.join(', ')||'なし')+' / 予定と完全一致 '+(v.assessment.exact.join(', ')||'なし')+' / crop '+JSON.stringify(v.crop)).join('\n');
+  timings.totalMs=+(performance.now()-begin).toFixed(1);
+  $('labelOcrTiming').textContent=JSON.stringify(timings,null,2);
+  $('labelOcrStatus').textContent=best.assessment.matches.length?'認識終了：品番を必ず目視確認してください':'品番候補なし。撮影条件と切り出し範囲を見直してください。';
+ }catch(e){$('ocrInput').value='';$('ocrUse').disabled=true;ocrCandidate=null;$('labelOcrStatus').textContent='OCR失敗：'+String(e);$('labelOcrTiming').textContent=JSON.stringify(timings,null,2)}
+ finally{btn.disabled=false}
+};
+
+$('ocrInput').oninput=()=>{ocrCandidate=null;$('ocrUse').disabled=true;$('ocrMatchResult').textContent='変更されたため再照合が必要です'};
+$('ocrMatch').onclick=()=>{ocrCandidate=null;$('ocrUse').disabled=true;const r=candidateStatus($('ocrInput').value,items.map(x=>x.part));if(r.exact.length===1&&items.filter(x=>x.part===r.exact[0]).length===1){ocrCandidate=r.exact[0];$('ocrMatchResult').textContent='完全一致候補：'+ocrCandidate+'。写真の品番と目視照合してください。';$('ocrUse').disabled=false}else{$('ocrMatchResult').textContent=r.exact.length?'複数候補が一致。自動選択できません。':'完全一致する予定品番がありません。手動確認してください。'}};
+$('ocrUse').onclick=()=>{if(!ocrCandidate)return;if(!confirm('写真に記載の品番と一致することを目視確認しましたか？\n'+ocrCandidate))return;$('part').value=ocrCandidate;scanSource='ocr-reviewed';$('rawCode').value='';pending=null;$('confirm').disabled=true;$('scanStatus').textContent='OCR候補を転記しました。照合するボタンを押してください。'};
+$('part').oninput=()=>{pending=null;scanSource='manual';$('rawCode').value='';$('confirm').disabled=true};
+$('check').onclick=()=>{pending=null;$('confirm').disabled=true;const r=checkScan(items,$('part').value);if(r.status==='READY_TO_CONFIRM'){pending=r;$('scanStatus').textContent='一致：'+$('part').value+'／残り '+r.remaining+' 個。確認後に確定してください。';$('confirm').disabled=false}else{$('scanStatus').textContent='照合できません：'+r.status}};
+$('confirm').onclick=()=>{if(!pending)return;const x=items.find(v=>v.id===pending.itemId);if(!x){pending=null;return}const r=checkScan(items,x.part,1);if(r.status!=='READY_TO_CONFIRM'||r.itemId!==pending.itemId){$('scanStatus').textContent='確定直前に照合条件が変わりました。やり直してください。';pending=null;$('confirm').disabled=true;return}x.done++;history.push({eventId:crypto.randomUUID(),itemId:x.id,type:'CONFIRM',at:new Date().toISOString(),rawCode:scanSource==='barcode'?$('rawCode').value:$('part').value,inputMethod:scanSource});pending=null;scanSource='manual';$('rawCode').value='';$('confirm').disabled=true;paint();void persist()};
+$('clear').onclick=async()=>{await stopCamera();if(!confirm('試験データをすべて初期化しますか？'))return;items=[];history=[];pending=null;scanSource='manual';$('rawCode').value='';resetDraft();$('confirm').disabled=true;$('errors').textContent='';$('data').value='';$('status').textContent='初期化しました';paint();void persist()};
+$('export').onclick=()=>exportCsv([['品番','品名','予定数量','検品済数量','管理No.','件管No.'],...items.map(x=>[x.part,x.name,x.qty,x.done,x.management,x.caseNo])],'inspection-preview.csv');
+$('exportHistory').onclick=()=>exportCsv([['イベントID','日時','対象明細ID','品番','原コード','入力方式','処理'],...history.map(h=>[h.eventId,h.at,h.itemId,items.find(x=>x.id===h.itemId)?.part||'',h.rawCode,h.inputMethod,h.type])],'inspection-history.csv');
+function status(message){$('storageStatus').textContent=message}
+let saveQueue=Promise.resolve();function persist(){let record;try{record=snapshot()}catch(e){status('保存対象が不正です: '+String(e));return Promise.reject(e)}const task=saveQueue.catch(()=>{}).then(()=>saveLocal(record));saveQueue=task;return task.then(()=>status('端末へ保存済み '+new Date().toLocaleTimeString('ja-JP'))).catch(e=>{status('保存失敗。JSONバックアップを保存してください: '+String(e))})}
+function csvCell(v){let s=String(v??'');if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"'}
+function exportCsv(rows,name){const csv='\uFEFF'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function snapshot(){return createSnapshot(items,history)}
+function applySnapshot(record){items=record.items;history=record.history;pending=null;ocrCandidate=null;$('ocrUse').disabled=true;scanSource='manual';$('confirm').disabled=true;$('rawCode').value='';$('part').value='';paint()}
+function downloadText(text,name){const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+$('saveLocal').onclick=async()=>{try{await persist();status('保存処理を実行しました。別途JSONバックアップも作成してください。')}catch(e){status('保存失敗: '+String(e))}};
+$('loadLocal').onclick=async()=>{try{const r=await loadLocal();if(!r){status('保存データがありません');return}if(!confirm('現在の試験データを保存済みデータで置き換えますか？'))return;await stopCamera();applySnapshot(r);status('端末内の保存データを読み込みました')}catch(e){status('読込失敗: '+String(e))}};
+$('downloadBackup').onclick=()=>{try{downloadText(exportBackup(snapshot()),'inspection-backup.json');status('JSONバックアップを出力しました')}catch(e){status('出力失敗: '+String(e))}};
+$('restoreBackup').onclick=async()=>{const file=$('restoreFile').files?.[0];if(!file){status('先にJSONファイルを選択してください');return}try{if(file.size>20_000_000)throw Error('バックアップが大きすぎます');const record=parseBackup(await file.text());if(!confirm('現在の試験データをバックアップで置き換えます。復元しますか？'))return;await stopCamera();applySnapshot(record);await persist();status('バックアップを復元して端末に保存しました')}catch(e){status('復元失敗: '+String(e))}};
+paint();
+</script></body></html>

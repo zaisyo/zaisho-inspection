@@ -1,0 +1,34 @@
+name: Development preview package
+on:
+  push:
+    branches:
+      - development/p0-baseline-20261031
+  workflow_dispatch:
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run regression suite
+        run: |
+          node --test tests/*.test.mjs
+          node scripts/check-ui-syntax.mjs
+      - name: Bundle development preview
+        run: |
+          mkdir -p preview/diagnostics preview/src/ocr preview/src/intake preview/src/storage
+          cp diagnostics/index.html preview/index.html
+          cp diagnostics/ocr-lab.html diagnostics/intake-lab.html diagnostics/delivery-note-lab.html preview/diagnostics/
+          cp src/ocr/*.mjs preview/src/ocr/
+          cp src/intake/*.mjs preview/src/intake/
+          cp src/storage/*.mjs preview/src/storage/
+          printf '%s\n' 'Zaisyo inspection DEVELOPMENT build - not for production.' 'Serve this directory over HTTPS or localhost, not file://.' 'Open index.html via the web server.' > preview/README.txt
+          node scripts/verify-preview.mjs preview
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inspection-development-preview
+          path: preview/
+          if-no-files-found: error
+          retention-days: 14
